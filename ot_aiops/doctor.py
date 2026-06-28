@@ -1,0 +1,139 @@
+"""Environment and connectivity diagnostics for ot-aiops.
+
+A doctor must survive the thing it diagnoses being unhealthy: every connectivity
+probe is reported as a status line, never raised as a traceback.
+"""
+
+from __future__ import annotations
+
+from rich.console import Console
+
+from ot_aiops.config import CONFIG_FILE, ENV_FILE, load_config, password_env_var
+from ot_aiops.secretstore import SECRETS_FILE, check_permissions, has_store
+
+_console = Console()
+
+
+def run_doctor(skip_probe: bool = False) -> int:
+    """Check config, the encrypted store, and endpoint reachability.
+
+    Returns a process exit code: 0 healthy, 1 problems found.
+    """
+    problems = 0
+
+    if CONFIG_FILE.exists():
+        _console.print(f"[green]✓ Config file present: {CONFIG_FILE}[/]")
+    else:
+        _console.print(
+            f"[yellow]! No config file ({CONFIG_FILE}); run 'ot-aiops init'.[/]"
+        )
+
+    try:
+        config = load_config()
+    except Exception as exc:  # noqa: BLE001 — report, do not crash
+        _console.print(f"[red]✗ Config load failed: {exc}[/]")
+        return 1
+
+    if has_store():
+        _console.print(f"[green]✓ Encrypted secret store present: {SECRETS_FILE}[/]")
+        perm_warning = check_permissions()
+        if perm_warning:
+            _console.print(f"[yellow]! {perm_warning}[/]")
+    elif ENV_FILE.exists():
+        _console.print(
+            f"[yellow]! Using legacy plaintext .env ({ENV_FILE}). Migrate with "
+            f"'ot-aiops secret migrate'.[/]"
+        )
+    else:
+        _console.print(
+            "[yellow]! No encrypted secret store yet. Run 'ot-aiops init' to set "
+            "up credentials (stored encrypted). Many OT endpoints are anonymous "
+            "and need no password.[/]"
+        )
+
+    if not config.targets:
+        _console.print("[yellow]! No endpoints configured.[/]")
+        problems += 1
+    else:
+        _console.print(f"[green]✓ {len(config.targets)} endpoint(s) configured[/]")
+        for t in config.targets:
+            var = password_env_var(t.name)
+            present = "set" if t.password() else "none (anonymous or run init)"
+            _console.print(
+                f"  [dim]{t.name} ({t.protocol} @ {_where(t)}) — password: {present} ({var})[/]"
+            )
+
+    if skip_probe:
+        _console.print("[dim]Skipping connectivity probe (--skip-probe).[/]")
+        return 1 if problems else 0
+
+    _console.print(
+        "[dim]Tip: point an endpoint at a local simulator to validate safely — "
+        "asyncua demo server (OPC-UA), a Modbus simulator, a pyS7/snap7 S7 sim, GX "
+        "Simulator (MC), the MTConnect public demo agent, or a local mosquitto "
+        "broker (MQTT).[/]"
+    )
+
+    for target in config.targets:
+        ok, detail = _probe(target)
+        if ok:
+            _console.print(f"[green]✓ Reachable '{target.name}' — {detail}[/]")
+        else:
+            _console.print(f"[red]✗ Probe '{target.name}' failed: {detail}[/]")
+            problems += 1
+
+    return 1 if problems else 0
+
+
+def _where(target) -> str:
+    """Human-readable 'where' for an endpoint, per protocol."""
+    if target.protocol == "opcua":
+        return target.endpoint_url or "?"
+    if target.protocol == "mtconnect":
+        return target.agent_url or f"{target.host}:{target.port}"
+    if target.protocol == "s7":
+        return f"{target.host}:{target.port} rack={target.rack} slot={target.slot}"
+    if target.protocol == "mc":
+        return f"{target.host}:{target.port} ({target.plctype})"
+    if target.protocol == "mqtt":
+        topic = target.topic or "#"
+        return f"{target.host}:{target.port} topic={topic} tls={target.use_tls}"
+    return f"{target.host}:{target.port}"
+
+
+def _probe(target) -> tuple[bool, str]:
+    """Probe one endpoint read-only; return (ok, detail) — never raises."""
+    try:
+        if target.protocol == "opcua":
+            from ot_aiops.ops.opcua_ops import server_info
+
+            info = server_info(target)
+            return True, f"OPC-UA state={info.get('state')} ({info.get('product_name', '?')})"
+        if target.protocol == "modbus":
+            from ot_aiops.ops.modbus_ops import modbus_read_holding
+
+            result = modbus_read_holding(target, address=0, count=1)
+            return True, f"Modbus holding[0]={result.get('decoded')}"
+        if target.protocol == "s7":
+            from ot_aiops.ops.s7_ops import s7_cpu_info
+
+            info = s7_cpu_info(target)
+            return True, f"S7 cpu_status={info.get('cpu_status')}"
+        if target.protocol == "mc":
+            from ot_aiops.ops.mc_ops import mc_cpu_status
+
+            info = mc_cpu_status(target)
+            return True, f"MC cpu={info.get('cpu_type')}"
+        if target.protocol == "mtconnect":
+            from ot_aiops.ops.mtconnect_ops import mtconnect_current
+
+            cur = mtconnect_current(target)
+            return True, f"MTConnect observations={cur.get('observation_count')}"
+        if target.protocol == "mqtt":
+            from ot_aiops.ops.sparkplug_ops import mqtt_read_topic
+
+            out = mqtt_read_topic(target, count=1, timeout_s=3)
+            return True, f"MQTT connected, messages={out.get('message_count')}"
+    except Exception as exc:  # noqa: BLE001 — connectivity is a status, not a crash
+        return False, str(exc)[:200]
+    return False, f"No probe implemented for protocol '{target.protocol}'."
