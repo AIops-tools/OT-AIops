@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import typer
 
+from ot_aiops.cli.analytics import analytics_app
 from ot_aiops.cli.diagnostics import diag_app
 from ot_aiops.cli.doctor import doctor_cmd
+from ot_aiops.cli.eip import eip_app
 from ot_aiops.cli.init import init_cmd
 from ot_aiops.cli.mc import mc_app
 from ot_aiops.cli.modbus import modbus_app
@@ -19,7 +21,8 @@ app = typer.Typer(
     name="ot-aiops",
     help="Governed, vendor-neutral OT data tap + intelligent troubleshooting for "
     "AI agents (OPC-UA / Modbus / S7comm / Mitsubishi MC / MTConnect / "
-    "MQTT-Sparkplug). Read-first; writes are MOC-gated.",
+    "MQTT-Sparkplug / EtherNet-IP) + OEE/asset analytics. Read-first; writes are "
+    "MOC-gated.",
     no_args_is_help=True,
 )
 
@@ -29,7 +32,9 @@ app.add_typer(s7_app, name="s7")
 app.add_typer(mc_app, name="mc")
 app.add_typer(mtconnect_app, name="mtconnect")
 app.add_typer(mqtt_app, name="mqtt")
+app.add_typer(eip_app, name="eip")
 app.add_typer(diag_app, name="diag")
+app.add_typer(analytics_app, name="analytics")
 app.add_typer(secret_app, name="secret")
 app.command("init")(init_cmd)
 app.command("doctor")(doctor_cmd)

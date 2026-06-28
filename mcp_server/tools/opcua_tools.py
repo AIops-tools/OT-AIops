@@ -106,3 +106,34 @@ def opcua_read_alarms(
         depth: Bounded scan depth.
     """
     return ops.read_alarms(_target(endpoint), node_id, depth)
+
+
+@mcp.tool()
+@governed_tool(risk_level="low")
+@tool_errors("dict")
+def opcua_read_history(
+    node_id: str,
+    endpoint: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    max_points: int = 1000,
+) -> dict:
+    """[READ] OPC-UA Historical Access (HDA): raw historical values over a window.
+
+    Reads stored history for a node via the server's HistoryRead service, bounded
+    by ``max_points``. Returns a clear 'unsupported' note when the server does not
+    historize the node (no crash).
+
+    Args:
+        node_id: The OPC-UA node id to read history for (e.g. ns=2;i=5).
+        endpoint: Endpoint name from config.
+        start: ISO-8601 window start (default: 1 hour before end).
+        end: ISO-8601 window end (default: now).
+        max_points: Max points to return (capped server-side at 2000).
+
+    Returns dict: {node_id, supported (bool), start, end, count,
+        values:[{value, source_timestamp, status_code}]}.
+
+    Example: opcua_read_history(node_id="ns=2;i=5", start="2026-06-28T08:00:00Z").
+    """
+    return ops.read_history(_target(endpoint), node_id, start, end, max_points)

@@ -24,7 +24,9 @@ historian/SCADA tiers it cannot reach.
 - After a protocol *-tap skill connects, to reason about *why* values are wrong.
 
 ## When NOT to use
-- Single-tag reads → use the matching protocol *-tap skill directly.
+- Single-tag reads → use the matching protocol *-tap skill directly (incl.
+  `ethernetip-tap` for Rockwell/Allen-Bradley Logix).
+- OEE / downtime / asset inventory / change-of-value → `industrial-analytics`.
 - IT/network/Kubernetes/hypervisor/backup → not this tool.
 
 ## Tools

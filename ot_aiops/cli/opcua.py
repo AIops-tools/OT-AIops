@@ -9,6 +9,7 @@ from rich.console import Console
 
 from ot_aiops.cli._common import EndpointOption, cli_errors, resolve_target
 from ot_aiops.ops import analysis
+from ot_aiops.ops import monitor as mon
 from ot_aiops.ops import opcua_ops as ops
 
 opcua_app = typer.Typer(help="OPC-UA read-only telemetry & problem surfacing.",
@@ -87,6 +88,34 @@ def health_cmd(
 ) -> None:
     """Classify tags against warn/alarm thresholds (ok/warn/alarm counts)."""
     _emit(analysis.health_summary(resolve_target(endpoint), list(node_id) if node_id else None))
+
+
+@opcua_app.command("history")
+@cli_errors
+def history_cmd(
+    node_id: str,
+    endpoint: EndpointOption = None,
+    start: str = typer.Option(None, "--start", help="ISO-8601 window start"),
+    end: str = typer.Option(None, "--end", help="ISO-8601 window end"),
+    max_points: int = typer.Option(1000, "--max-points"),
+) -> None:
+    """Read OPC-UA Historical Access (HDA) raw values over a window."""
+    _emit(ops.read_history(resolve_target(endpoint), node_id, start, end, max_points))
+
+
+@opcua_app.command("monitor")
+@cli_errors
+def monitor_cmd(
+    node_id: str,
+    endpoint: EndpointOption = None,
+    duration_s: int = typer.Option(10, "--duration-s"),
+    interval_ms: int = typer.Option(500, "--interval-ms"),
+    deadband: float = typer.Option(0.0, "--deadband"),
+    max_changes: int = typer.Option(100, "--max-changes"),
+) -> None:
+    """Bounded change-of-value capture (only changes, never an open loop)."""
+    _emit(mon.monitor_changes(
+        resolve_target(endpoint), node_id, duration_s, interval_ms, deadband, max_changes))
 
 
 @opcua_app.command("anomaly")

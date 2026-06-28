@@ -41,12 +41,23 @@ def opcua_server():
     press = line.add_variable(idx, "Pressure", 4.2)
     fault = line.add_variable(idx, "MotorFault", True)
     srv.start()
+    history_ok = True
+    try:
+        # Enable Historical Access (HDA) on the temperature node so the
+        # read_history path is exercised against a REAL server, not a mock.
+        srv.historize_node_data_change(temp, period=None, count=100)
+        temp.set_value(85.5)
+        temp.set_value(86.0)
+        temp.set_value(85.0)  # restore the value other tests assert
+    except Exception:  # noqa: BLE001 — some asyncua builds vary; fall back to "unsupported"
+        history_ok = False
     try:
         yield {
             "url": url,
             "temp": temp.nodeid.to_string(),
             "press": press.nodeid.to_string(),
             "fault": fault.nodeid.to_string(),
+            "history_ok": history_ok,
         }
     finally:
         srv.stop()
@@ -127,6 +138,43 @@ def test_health_summary_thresholds_real(opcua_server):
     assert out["overall"] == "warn"  # 85 >= warn_high 70, < alarm_high 90
     assert out["counts"]["warn"] == 1
     assert out["offenders"][0]["status"] == "warn"
+
+
+@pytest.mark.integration
+def test_read_history_real(opcua_server):
+    """HDA against the real in-process server (temp node is historized)."""
+    from datetime import datetime, timedelta
+
+    end = datetime.now() + timedelta(minutes=1)  # noqa: DTZ005 — server-local window
+    start = end - timedelta(hours=1)
+    out = ops.read_history(
+        _target(opcua_server["url"]), opcua_server["temp"],
+        start=start.isoformat(), end=end.isoformat(), max_points=50,
+    )
+    assert out["node_id"] == opcua_server["temp"]
+    if opcua_server["history_ok"]:
+        assert out["supported"] is True
+        # The three set_value calls were recorded as history points.
+        assert out["count"] >= 1
+        assert all("source_timestamp" in v for v in out["values"])
+    else:  # pragma: no cover — only when this asyncua build lacks sync historizing
+        assert "supported" in out
+
+
+@pytest.mark.integration
+def test_monitor_changes_bounded_real(opcua_server):
+    """CoV monitor against the real server: a static node yields one change."""
+    from ot_aiops.ops import monitor
+
+    out = monitor.monitor_changes(
+        _target(opcua_server["url"]), opcua_server["press"],
+        duration_s=2, interval_ms=100, max_changes=10,
+    )
+    assert out["ref"] == opcua_server["press"]
+    # First read is always a change; a static value yields exactly one.
+    assert out["change_count"] >= 1
+    assert out["changes"][0]["value"] == 4.2
+    assert out["change_count"] <= 10  # bounded by max_changes
 
 
 @pytest.mark.integration

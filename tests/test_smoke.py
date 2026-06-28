@@ -13,9 +13,9 @@ import pytest
 from typer.testing import CliRunner
 
 EXPECTED_TOOLS = {
-    # OPC-UA (read / digitalization)
+    # OPC-UA (read / digitalization, incl. Historical Access)
     "opcua_server_info", "opcua_browse", "opcua_read_node", "opcua_read_many",
-    "opcua_subscribe_sample", "opcua_read_alarms",
+    "opcua_subscribe_sample", "opcua_read_alarms", "opcua_read_history",
     # problem surfacing
     "health_summary", "anomaly_scan",
     # Modbus
@@ -28,19 +28,25 @@ EXPECTED_TOOLS = {
     # MTConnect (CNC machine tools)
     "mtconnect_probe", "mtconnect_current", "mtconnect_sample", "mtconnect_assets",
     "mtconnect_oee_snapshot",
-    # MQTT / Sparkplug B / UNS
-    "mqtt_read_topic", "sparkplug_subscribe_sample", "sparkplug_node_list",
-    "uns_browse", "mqtt_publish",
+    # MQTT / Sparkplug B / UNS (full protobuf decode)
+    "mqtt_read_topic", "sparkplug_subscribe_sample", "sparkplug_decode_payload",
+    "sparkplug_node_list", "uns_browse", "mqtt_publish",
+    # EtherNet/IP (Rockwell / Allen-Bradley Logix)
+    "eip_controller_info", "eip_list_tags", "eip_read_tag", "eip_read_many",
+    "eip_write_tag",
     # cross-protocol diagnostics
     "diagnose_dataflow", "historian_health", "alarm_bad_actors", "tag_health",
+    # cross-protocol analytics (OEE / downtime / asset / CoV)
+    "oee_compute", "downtime_events", "oee_multidim", "asset_inventory",
+    "monitor_changes",
     # self-description
     "protocols_supported",
-    # roadmap stubs
-    "ethercat_status", "ethernetip_status",
+    # roadmap stub
+    "ethercat_status",
 }
 
 # Tools that perform an OT-dangerous write/command — must be governed high-risk.
-WRITE_TOOLS = {"s7_write_db", "mc_write_words", "mqtt_publish"}
+WRITE_TOOLS = {"s7_write_db", "mc_write_words", "mqtt_publish", "eip_write_tag"}
 
 
 @pytest.mark.unit
@@ -59,10 +65,14 @@ def test_all_modules_import():
         "ot_aiops.ops.mc_ops",
         "ot_aiops.ops.mtconnect_ops",
         "ot_aiops.ops.sparkplug_ops",
+        "ot_aiops.ops.eip_ops",
+        "ot_aiops.ops.oee",
+        "ot_aiops.ops.asset_inventory",
+        "ot_aiops.ops.monitor",
         "ot_aiops.ops.diagnostics",
         "ot_aiops.ops.overview",
         "ot_aiops.ops.ethercat",
-        "ot_aiops.ops.ethernetip",
+        "ot_aiops.sparkplug_b_pb2",
         "ot_aiops.cli",
         "ot_aiops.cli._root",
         "ot_aiops.cli._common",
@@ -72,6 +82,8 @@ def test_all_modules_import():
         "ot_aiops.cli.mc",
         "ot_aiops.cli.mtconnect",
         "ot_aiops.cli.mqtt",
+        "ot_aiops.cli.eip",
+        "ot_aiops.cli.analytics",
         "ot_aiops.cli.diagnostics",
         "ot_aiops.cli.secret",
         "ot_aiops.cli.init",
@@ -85,10 +97,13 @@ def test_all_modules_import():
         "mcp_server.tools.mc_tools",
         "mcp_server.tools.mtconnect_tools",
         "mcp_server.tools.sparkplug_tools",
+        "mcp_server.tools.eip_tools",
+        "mcp_server.tools.oee_tools",
+        "mcp_server.tools.asset_tools",
+        "mcp_server.tools.monitor_tools",
         "mcp_server.tools.diagnostics_tools",
         "mcp_server.tools.overview_tools",
         "mcp_server.tools.ethercat_tools",
-        "mcp_server.tools.ethernetip_tools",
     ):
         importlib.import_module(name)
 
@@ -97,7 +112,7 @@ def test_all_modules_import():
 def test_version():
     import ot_aiops
 
-    assert ot_aiops.__version__ == "0.1.1"
+    assert ot_aiops.__version__ == "0.2.0"
 
 
 @pytest.mark.unit
@@ -107,8 +122,8 @@ def test_cli_app_builds_and_help_works():
     runner = CliRunner()
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for sub in ("opcua", "modbus", "s7", "mc", "mtconnect", "mqtt", "diag",
-                "secret", "init", "doctor", "mcp", "protocols"):
+    for sub in ("opcua", "modbus", "s7", "mc", "mtconnect", "mqtt", "eip", "diag",
+                "analytics", "secret", "init", "doctor", "mcp", "protocols"):
         assert sub in result.output
 
 
@@ -126,7 +141,7 @@ def test_cli_leaf_help_triggers_lazy_imports():
     for cmd in (
         ["opcua", "--help"], ["modbus", "--help"], ["s7", "--help"],
         ["mc", "--help"], ["mtconnect", "--help"], ["mqtt", "--help"],
-        ["diag", "--help"],
+        ["eip", "--help"], ["analytics", "--help"], ["diag", "--help"],
     ):
         result = runner.invoke(app, cmd)
         assert result.exit_code == 0, f"{cmd} failed: {result.output}"
@@ -134,6 +149,7 @@ def test_cli_leaf_help_triggers_lazy_imports():
         ["opcua", "info", "--help"], ["opcua", "browse", "--help"],
         ["opcua", "read", "--help"], ["opcua", "read-many", "--help"],
         ["opcua", "sample", "--help"], ["opcua", "alarms", "--help"],
+        ["opcua", "history", "--help"], ["opcua", "monitor", "--help"],
         ["opcua", "health", "--help"], ["opcua", "anomaly", "--help"],
         ["modbus", "holding", "--help"], ["modbus", "input", "--help"],
         ["modbus", "coils", "--help"], ["modbus", "discrete", "--help"],
@@ -147,6 +163,11 @@ def test_cli_leaf_help_triggers_lazy_imports():
         ["mtconnect", "oee", "--help"],
         ["mqtt", "read", "--help"], ["mqtt", "nodes", "--help"],
         ["mqtt", "browse", "--help"], ["mqtt", "publish", "--help"],
+        ["eip", "info", "--help"], ["eip", "tags", "--help"],
+        ["eip", "read", "--help"], ["eip", "read-many", "--help"],
+        ["eip", "write-tag", "--help"],
+        ["analytics", "oee", "--help"], ["analytics", "downtime", "--help"],
+        ["analytics", "oee-multidim", "--help"], ["analytics", "asset", "--help"],
         ["diag", "dataflow", "--help"], ["diag", "alarms", "--help"],
         ["diag", "tags", "--help"], ["diag", "historian", "--help"],
         ["secret", "set", "--help"], ["secret", "list", "--help"],
@@ -190,11 +211,24 @@ def test_unsupported_protocol_rejected():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("protocol", ["opcua", "modbus", "s7", "mc", "mtconnect", "mqtt"])
+@pytest.mark.parametrize(
+    "protocol", ["opcua", "modbus", "s7", "mc", "mtconnect", "mqtt", "ethernetip"]
+)
 def test_supported_protocols_accepted(protocol):
     from ot_aiops.config import TargetConfig
 
     assert TargetConfig(name="x", protocol=protocol).protocol == protocol
+
+
+@pytest.mark.unit
+def test_eip_alias_normalized_to_ethernetip(tmp_path):
+    import ot_aiops.config as cfg
+
+    path = tmp_path / "config.yaml"
+    path.write_text("endpoints:\n  - {name: cell5, protocol: eip, host: 10.0.0.9, slot: 0}\n")
+    config = cfg.load_config(path)
+    assert config.get_target("cell5").protocol == "ethernetip"
+    assert config.get_target("cell5").slot == 0
 
 
 @pytest.mark.unit
@@ -218,18 +252,12 @@ def test_protocols_supported_lists_all():
     from ot_aiops.ops.overview import protocols_supported
 
     out = protocols_supported()
-    assert set(out["implemented_protocols"]) == {"opcua", "modbus", "s7", "mc", "mtconnect", "mqtt"}
-    assert set(out["roadmap_stubs"]) == {"ethernetip", "ethercat"}
-
-
-@pytest.mark.unit
-def test_ethernetip_stub_reports_not_implemented():
-    from ot_aiops.ops import ethernetip
-
-    out = ethernetip.ethernetip_status()
-    assert out["implemented"] is False
-    assert out["status"] == "preview-stub"
-    assert "pycomm3" in out["message"]
+    assert set(out["implemented_protocols"]) == {
+        "opcua", "modbus", "s7", "mc", "mtconnect", "mqtt", "ethernetip"
+    }
+    assert set(out["roadmap_stubs"]) == {"ethercat"}
+    assert "asset_inventory" in out["analytics"]
+    assert "oee_compute" in out["analytics"]
 
 
 @pytest.mark.unit

@@ -9,6 +9,7 @@ trigger an unbounded walk or an infinite subscription loop.
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
 from ot_aiops.connection import OTConnectionError, opcua_session
@@ -20,6 +21,7 @@ MAX_BROWSE_DEPTH = 6
 MAX_READ_NODES = 100
 MAX_SAMPLES = 200
 MAX_SAMPLE_SECONDS = 60
+MAX_HISTORY_POINTS = 2000
 OBJECTS_NODE = "i=85"  # standard OPC-UA Objects folder
 
 # Substrings that suggest a node represents an alarm / condition state.
@@ -243,6 +245,69 @@ def _scan_alarms(client: Any, node: Any, depth_left: int, active: list[dict]) ->
     return scanned
 
 
+def _parse_iso(value: Any) -> datetime | None:
+    """Parse an ISO-8601 timestamp (tolerant of a trailing Z), else None."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def read_history(
+    target: Any,
+    node_id: str,
+    start: str | None = None,
+    end: str | None = None,
+    max_points: int = 1000,
+) -> dict:
+    """[READ] OPC-UA Historical Access (HDA): raw values over a [start,end] window.
+
+    Reads stored historical values for a node via the server's HistoryRead
+    service (asyncua ``read_raw_history``), bounded by ``max_points``. ``start`` /
+    ``end`` are ISO-8601; defaults to the last hour. Returns a clear message when
+    the server does not support history for the node.
+    """
+    max_points = max(1, min(int(max_points), MAX_HISTORY_POINTS))
+    end_dt = _parse_iso(end) or datetime.now()  # noqa: DTZ005 — server-local window
+    start_dt = _parse_iso(start) or (end_dt - timedelta(hours=1))
+    with opcua_session(target) as client:
+        node = client.get_node(node_id)
+        try:
+            values = node.read_raw_history(start_dt, end_dt, numvalues=max_points)
+        except Exception as exc:  # noqa: BLE001 — many servers lack HDA for a node
+            return {
+                "node_id": s(node_id, 128),
+                "supported": False,
+                "values": [],
+                "count": 0,
+                "note": s(
+                    "Server returned no history for this node (HDA may be "
+                    f"unsupported or the node is not historized): {exc}", 240
+                ),
+            }
+        out = []
+        for dv in list(values)[:max_points]:
+            out.append(
+                {
+                    "value": _coerce_value(getattr(dv.Value, "Value", None)),
+                    "source_timestamp": s(dv.SourceTimestamp, 64),
+                    "status_code": s(getattr(dv.StatusCode, "name", dv.StatusCode), 64),
+                }
+            )
+    return {
+        "node_id": s(node_id, 128),
+        "supported": True,
+        "start": s(start_dt, 64),
+        "end": s(end_dt, 64),
+        "count": len(out),
+        "values": out,
+    }
+
+
 def read_value_or_error(client: Any, node_id: str) -> tuple[float | None, dict]:
     """Helper used by analysis: read a node's numeric value + its descriptor.
 
@@ -265,6 +330,7 @@ __all__ = [
     "read_many",
     "subscribe_sample",
     "read_alarms",
+    "read_history",
     "opcua_session",
     "OTConnectionError",
     "read_value_or_error",

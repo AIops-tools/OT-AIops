@@ -49,10 +49,12 @@ SECRET_ENV_SUFFIX = "_PASSWORD"  # nosec B105 — env var suffix, not a secret
 
 _log = logging.getLogger("ot-aiops.config")
 
-# OT protocols this tool officially supports. EtherCAT and EtherNet/IP are
-# documented preview stubs (no driver bundled) — see ot_aiops.ops.ethercat /
-# ot_aiops.ops.ethernetip.
-SUPPORTED_PROTOCOLS = ("opcua", "modbus", "s7", "mc", "mtconnect", "mqtt")
+# OT protocols this tool officially supports. ``eip`` is an accepted alias for
+# ``ethernetip`` (normalized to ``ethernetip`` on load). EtherCAT remains a
+# documented preview stub (no driver bundled) — see ot_aiops.ops.ethercat.
+SUPPORTED_PROTOCOLS = (
+    "opcua", "modbus", "s7", "mc", "mtconnect", "mqtt", "ethernetip", "eip",
+)
 
 DEFAULT_MODBUS_PORT = 502
 DEFAULT_OPCUA_PORT = 4840
@@ -60,6 +62,7 @@ DEFAULT_S7_PORT = 102  # ISO-on-TCP (RFC1006)
 DEFAULT_MC_PORT = 5007  # Mitsubishi MC 3E binary (common default)
 DEFAULT_MQTT_PORT = 1883  # plain MQTT (8883 when TLS)
 DEFAULT_MQTT_TLS_PORT = 8883
+DEFAULT_EIP_PORT = 44818  # EtherNet/IP (CIP over TCP)
 
 # Per-protocol default TCP port, used by load_config + the init wizard.
 _DEFAULT_PORTS = {
@@ -68,6 +71,7 @@ _DEFAULT_PORTS = {
     "s7": DEFAULT_S7_PORT,
     "mc": DEFAULT_MC_PORT,
     "mqtt": DEFAULT_MQTT_PORT,
+    "ethernetip": DEFAULT_EIP_PORT,
 }
 
 
@@ -176,6 +180,9 @@ class TargetConfig:
       * ``mtconnect`` — ``agent_url`` (HTTP agent base, e.g. http://host:5000).
       * ``mqtt``      — ``host`` / ``port`` (1883/8883) / ``topic`` / ``use_tls``
                         / ``username`` (Sparkplug B / UNS).
+      * ``ethernetip``— ``host`` / ``slot`` (Rockwell/Allen-Bradley Logix,
+                        ControlLogix/CompactLogix, CIP via pycomm3). ``eip`` is
+                        an accepted alias.
 
     The password / MQTT password is resolved from the encrypted store, never
     stored here.
@@ -207,9 +214,8 @@ class TargetConfig:
             raise ValueError(
                 f"Endpoint '{self.name}' has unsupported protocol "
                 f"'{self.protocol}'. Supported: {', '.join(SUPPORTED_PROTOCOLS)}. "
-                f"EtherCAT and EtherNet/IP are documented preview stubs (need a "
-                f"driver/master stack) — request more protocols via a GitHub "
-                f"issue/PR."
+                f"EtherCAT is a documented preview stub (needs a master stack) — "
+                f"request more protocols via a GitHub issue/PR."
             )
 
     def password(self) -> str:
@@ -322,6 +328,8 @@ def load_config(config_path: Path | None = None) -> AppConfig:
 def _parse_target(d: dict) -> TargetConfig:
     """Build one immutable TargetConfig from a raw config dict."""
     protocol = d.get("protocol", "opcua")
+    if protocol == "eip":  # normalize the accepted alias
+        protocol = "ethernetip"
     use_tls = _as_bool(d.get("use_tls", False))
     return TargetConfig(
         name=d["name"],
@@ -334,7 +342,9 @@ def _parse_target(d: dict) -> TargetConfig:
         security_policy=str(d.get("security_policy", "None")),
         username=str(d.get("username", "")),
         rack=int(d.get("rack", 0) or 0),
-        slot=int(d.get("slot", 1) or 1),
+        # slot may legitimately be 0 (CompactLogix / many ControlLogix), so do
+        # NOT collapse a 0 to the default with ``or``.
+        slot=int(d["slot"]) if d.get("slot") not in (None, "") else 1,
         plctype=str(d.get("plctype", "Q") or "Q"),
         agent_url=str(d.get("agent_url", "")),
         topic=str(d.get("topic", "")),

@@ -2,11 +2,11 @@
 
 # OT-AIops
 
-**Governed, vendor-neutral industrial data tap + intelligent troubleshooting for AI agents — across OPC-UA, Modbus-TCP, S7comm, Mitsubishi MC, MTConnect, and MQTT/Sparkplug B.**
+**Governed, vendor-neutral industrial data tap + intelligent troubleshooting for AI agents — across OPC-UA (incl. Historical Access), Modbus-TCP, S7comm, Mitsubishi MC, MTConnect, MQTT/Sparkplug B (full decode), and EtherNet/IP (Rockwell/Allen-Bradley Logix) — plus OEE/downtime, active asset-inventory, and change-of-value analytics.**
 
-OT-AIops is the OT/industrial member of [AIops-tools](https://github.com/AIops-tools). It is a **factory-level, vendor-neutral, governed data tap** that lets an AI agent safely *read* industrial control systems across many field protocols, plus a **cross-protocol intelligence layer** that localizes "no data" breaks, analyzes alarm floods (ISA-18.2), and ranks unhealthy tags. Read-first by design; the few write/command paths are OT-dangerous and gated by MOC discipline. Every tool runs through a vendored governance harness (audit / budget / risk-tier / undo).
+OT-AIops is the OT/industrial member of [AIops-tools](https://github.com/AIops-tools). It is a **factory-level, vendor-neutral, governed data tap** that lets an AI agent safely *read* industrial control systems across many field protocols, plus a **cross-protocol intelligence layer** that localizes "no data" breaks, analyzes alarm floods (ISA-18.2), ranks unhealthy tags, computes OEE / categorizes downtime, and builds an active asset register. Read-first by design; the few write/command paths are OT-dangerous and gated by MOC discipline. Every tool runs through a vendored governance harness (audit / budget / risk-tier / undo).
 
-> ⚠️ **Preview / v0.1.0** — validated against an **in-process OPC-UA simulator, mocked Modbus/S7/Mitsubishi clients, static MTConnect XML fixtures, and synthetic MQTT/Sparkplug payloads**. **NOT tested against live PLCs / SCADA / brokers.** See *Safety*.
+> ⚠️ **Preview / v0.2.0** — validated against an **in-process OPC-UA simulator (incl. HDA), mocked Modbus/S7/Mitsubishi/EtherNet-IP(pycomm3) clients, static MTConnect XML fixtures, and synthetic MQTT/Sparkplug B protobuf payloads**. **NOT tested against live PLCs / SCADA / brokers / Logix controllers.** See *Safety*.
 
 ## Why
 
@@ -24,6 +24,7 @@ OT is exactly where you want an agent on a tight leash: read first, never blind-
 | OPC-UA | `opcua_read_many` | batch read | R | low | [{node_id, value, ...}] |
 | OPC-UA | `opcua_subscribe_sample` | bounded sample | R | low | {collected, samples[]} |
 | OPC-UA | `opcua_read_alarms` | alarm surfacing | R | low | {active_alarms[], active_count} |
+| OPC-UA | `opcua_read_history` | Historical Access (HDA) | R | low | {supported, count, values[]} |
 | OPC-UA | `health_summary` | threshold classify | R | low | {overall, counts, offenders[]} |
 | OPC-UA | `anomaly_scan` | stddev outliers | R | low | {mean, stddev, outliers[]} |
 | Modbus | `modbus_read_holding` | FC03 | R | low | {raw_registers, decoded[]} |
@@ -47,19 +48,29 @@ OT is exactly where you want an agent on a tight leash: read first, never blind-
 | MTConnect | `mtconnect_assets` | assets | R | low | {assets[]} |
 | MTConnect | `mtconnect_oee_snapshot` | OEE inputs | R | low | {availability, execution, verdict} |
 | MQTT/Sparkplug | `mqtt_read_topic` | bounded read | R | low | {messages:[{topic, payload}]} |
-| MQTT/Sparkplug | `sparkplug_subscribe_sample` | bounded SpB sample | R | low | {samples:[{sparkplug, payload}]} |
-| MQTT/Sparkplug | `sparkplug_node_list` | node discovery | R | low | {nodes:[{group_id, edge_node_id, devices}]} |
+| MQTT/Sparkplug | `sparkplug_subscribe_sample` | bounded SpB sample (full decode) | R | low | {samples:[{sparkplug, payload:{metrics[]}}], seq_gap_count} |
+| MQTT/Sparkplug | `sparkplug_decode_payload` | decode raw SpB payload | R | low | {metrics:[{name, alias, datatype, value, is_historical}]} |
+| MQTT/Sparkplug | `sparkplug_node_list` | node discovery + state | R | low | {nodes:[{group_id, edge_node_id, online, devices}], primary_hosts[]} |
 | MQTT/Sparkplug | `uns_browse` | topic-tree browse | R | low | {topics[], tree{}} |
 | MQTT/Sparkplug | `mqtt_publish` | publish/command | **W** | **high/MOC** | {published_bytes, applied} |
+| EtherNet/IP | `eip_controller_info` | Logix controller id | R | low | {controller:{vendor, product_name, revision, serial}} |
+| EtherNet/IP | `eip_list_tags` | tag discovery | R | low | {tag_count, tags:[{name, data_type, structure}]} |
+| EtherNet/IP | `eip_read_tag` | read one tag/array | R | low | {tag, value, type, good} |
+| EtherNet/IP | `eip_read_many` | batch read | R | low | {items:[{tag, value, type}]} |
+| EtherNet/IP | `eip_write_tag` | write tag | **W** | **high/MOC** | {before, written, _undo_id} |
 | Diagnostics | `diagnose_dataflow` | localize no-data | R | low | {verdict, diagnosis, hops[]} |
 | Diagnostics | `alarm_bad_actors` | ISA-18.2 flood | R | low | {flood_verdict, top_offenders[]} |
 | Diagnostics | `tag_health` | offender ranking | R | low | {overall, offenders[]} |
 | Diagnostics | `historian_health` | gap/flatline | R | low | {verdict, gaps[]} |
-| Self | `protocols_supported` | capability map | R | low | {protocols[], diagnostics[]} |
-| Roadmap | `ethernetip_status` | Rockwell stub | R | low | {implemented:false, suggested_dependency} |
+| Analytics | `oee_compute` | OEE = A×P×Q | R | low | {availability, performance, quality, oee, oee_pct} |
+| Analytics | `downtime_events` | stoppage detect + categorize | R | low | {event_count, total_downtime_s, by_category, events[]} |
+| Analytics | `oee_multidim` | OEE machine×part×shift | R | low | {matrix[], worst_performers[], mean_oee} |
+| Analytics | `asset_inventory` | active fingerprint | R | low | {assets:[{protocol, vendor, model, firmware, reachable}]} |
+| Analytics | `monitor_changes` | bounded change-of-value | R | low | {change_count, changes:[{value, previous, wall_clock}]} |
+| Self | `protocols_supported` | capability map | R | low | {protocols[], diagnostics[], analytics[]} |
 | Roadmap | `ethercat_status` | EtherCAT stub | R | low | {implemented:false, suggested_dependency} |
 
-**40 tools** = 33 read · 3 write (MOC) · 4 diagnostics. Run `protocols_supported()` (or `ot-aiops protocols`) for the live map.
+**51 tools** = 47 read + 4 write (MOC). The 47 reads = 36 protocol-read · 4 diagnostics · 5 analytics · 1 self · 1 roadmap stub. Run `protocols_supported()` (or `ot-aiops protocols`) for the live map.
 
 ---
 
@@ -92,15 +103,35 @@ OT is exactly where you want an agent on a tight leash: read first, never blind-
 - **Not supported / planned**: MTConnect streaming (long-poll `interval=`); only bounded `count=` samples.
 
 ### MQTT / Sparkplug B / UNS
-- **Versions/variants**: `paho-mqtt` — **MQTT 3.1.1 & 5**. Sparkplug B topic convention `spBv1.0/{group}/{type}/{edge}/[device]` (NBIRTH/DBIRTH/NDATA/DDATA…). Sparkplug **protobuf payloads decode when an optional decoder (`tahu`) is installed**, else reported as binary with a hex preview + hint (JSON/text payloads always decode). TLS + username/password supported.
+- **Versions/variants**: `paho-mqtt` — **MQTT 3.1.1 & 5**. Sparkplug B topic convention `spBv1.0/{group}/{type}/{edge}/[device]` (NBIRTH/DBIRTH/NDATA/DDATA/NDEATH/DDEATH/STATE). TLS + username/password supported.
+- **Full Sparkplug B decode** (no optional extra): payloads are protobuf-decoded with a *vendored, byte-for-byte* copy of the official **Eclipse Tahu** `sparkplug_b.proto` generated module (depends only on `protobuf`). Per metric you get **name, alias** (resolved to its name via the BIRTH model), **datatype** (Int8…Int64/UInt…/Float/Double/Boolean/String/DateTime/Text/UUID/**DataSet**/Bytes/File/**Template**/PropertySet…), **value**, **timestamp**, and the **`is_historical` / `is_null`** flags. A **birth/death + seq model** tracks node/device **online** state (NBIRTH/DBIRTH ↔ NDEATH/DDEATH), builds the alias→name map from BIRTH, applies NDATA/DDATA by alias, and flags **`seq` gaps / out-of-order**. **Primary-host** awareness: `STATE/<host_id>` topics surface in `sparkplug_node_list`. `sparkplug_decode_payload` decodes a single raw payload (base64/hex) offline.
 - **Connection params**: `host`/`broker`, `port` (1883 / 8883 TLS), `topic`, `use_tls`, `username` (password encrypted).
 - **Command**: `mqtt_publish` = **high/MOC/dry-run default**; a published command has **no automatic inverse**.
 
-### EtherNet/IP (Rockwell / Allen-Bradley) — roadmap stub
-- `ethernetip_status` returns a clear "not implemented" + roadmap. Planned lib: **`pycomm3`** (pure-Python Logix tags). Not bundled to keep the install light.
+### EtherNet/IP (Rockwell / Allen-Bradley)
+- **Supported**: **ControlLogix / CompactLogix** (and GuardLogix) via **CIP / EtherNet-IP** using **`pycomm3`** (pure-Python — no native deps). **Tag-based**, symbolic access: read/write tags by name (`Conveyor.Speed`, `Array[3]`, `Program:Main.X`) and **discover the controller's tag list** at runtime (`eip_list_tags`, the headline feature). `eip_controller_info` reads the controller identity.
+- **Connection params**: `host`, `slot` (0 for CompactLogix; the CPU slot for a ControlLogix chassis), `port` (44818). `protocol: ethernetip` (alias `eip`).
+- **Write**: `eip_write_tag` = **high risk_tier, MOC, dry-run default**, captures BEFORE value + undo.
+- **Not supported / planned**: **PLC-5 / SLC-500 (PCCC)** and **Micro800** are **not supported = roadmap** (Logix tag model only).
 
 ### EtherCAT — roadmap stub
 - `ethercat_status` returns a clear "not implemented" + roadmap. Needs a master stack (**`pysoem`/SOEM**) + a dedicated NIC + slave devices.
+
+### OEE / downtime analytics (cross-protocol, read-only)
+- `oee_compute` — **OEE = Availability × Performance × Quality** from production inputs (planned time, run time, ideal cycle, total/good counts). Each factor is reported **raw + clamped to [0,1]**; a `capped` performance >1.0 flags an optimistic ideal cycle.
+- `downtime_events` — auto-detects **running→stopped transitions** in a `{timestamp, state}` series and produces stoppage events with durations, **categorized** (changeover / material / mechanical / quality / break / unknown, by keyword heuristics or a `{state: category}` override).
+- `oee_multidim` — aggregates OEE across **machine × part × shift** (or any dimensions) from labelled records → the matrix + worst performers.
+- Operate over **provided/collected inputs** (fully testable without a plant). `mtconnect_oee_snapshot` surfaces the live MTConnect availability/execution inputs that feed these.
+
+### Active asset inventory / fingerprint (read-only)
+- `asset_inventory` — for each configured (or named) endpoint, **actively connects** with our own protocol client and reads its **identity** call (S7 `s7_cpu_info`, EtherNet/IP `eip_controller_info`, OPC-UA server build info, Modbus **Device Identification FC43/0x2B**, Mitsubishi CPU type, MTConnect device model), aggregating **vendor / model / firmware / serial / reachable / last_seen** into an asset register.
+- **Honest scope (IEC 62443-flavored)**: this is **ACTIVE fingerprinting via our client connections**, **NOT** passive SPAN/tap discovery — it only finds devices we are configured to reach and adds light load to each. **Passive, traffic-mirroring discovery is roadmap.**
+
+### OPC-UA Historical Access (HDA)
+- `opcua_read_history` — reads stored historical values for a node over a `[start,end]` ISO-8601 window via the server's **HistoryRead** service (`asyncua` `read_raw_history`), **bounded** by `max_points` (≤2000). Returns `{supported:false, note}` **gracefully** when the server does not historize the node (no crash). Read-only.
+
+### Change-of-value (CoV) monitor
+- `monitor_changes` — bounded **deadband report**: polls a point and returns **only the value CHANGES** (with timestamps), not every sample. Works over **OPC-UA / Modbus / S7 / Mitsubishi MC / EtherNet-IP**. **Never an infinite loop** — hard-capped by both `duration_s` (≤120) and `max_changes` (≤500). Read-only.
 
 ---
 
@@ -152,6 +183,10 @@ endpoints:
     use_tls: true                  # → port 8883
     topic: spBv1.0/#
     # username: edge1              # password stored encrypted
+  - name: cell5
+    protocol: ethernetip           # alias: eip
+    host: 10.0.0.9
+    slot: 0                        # 0 for CompactLogix; CPU slot for ControlLogix
 ```
 
 ### `ot-aiops init` walkthrough (per protocol)
@@ -176,6 +211,7 @@ Step 2 — add an endpoint
 - **MTConnect** — the public MTConnect demo agent, or a local agent.
 - **MQTT** — a local `mosquitto` broker (+ a Sparkplug edge for SpB topics).
 - **Mitsubishi MC** — GX Simulator / an MC 3E server sim.
+- **EtherNet/IP** — a pycomm3-compatible CIP/Logix simulator (or a spare CompactLogix).
 
 ---
 
@@ -189,7 +225,13 @@ ot-aiops s7 read-db 1 REAL 4 -e press1 --count 2
 ot-aiops mc words D100 -e cell3 --count 8
 ot-aiops mtconnect oee -e vmc1
 ot-aiops mqtt nodes -e uns --timeout-s 15
+ot-aiops eip tags -e cell5                           # Logix tag discovery
+ot-aiops eip read "Conveyor.Speed" -e cell5
+ot-aiops opcua history "ns=2;i=5" -e line1 --start 2026-06-28T08:00:00Z   # HDA
+ot-aiops opcua monitor "ns=2;i=5" -e line1 --duration-s 20 --deadband 0.5 # CoV
 ot-aiops diag dataflow -e line1 --ref "ns=2;i=5" --freshness-s 30
+ot-aiops analytics oee 28800 25200 2.0 12000 11800   # OEE = A×P×Q
+ot-aiops analytics asset -e press1 -e cell5           # active asset register
 ```
 
 ### CLI (write — dry-run by default, double-confirm on `--apply`)
@@ -197,6 +239,7 @@ ot-aiops diag dataflow -e line1 --ref "ns=2;i=5" --freshness-s 30
 ot-aiops s7 write-db 1 INT 0 42 -e press1            # dry-run preview
 ot-aiops s7 write-db 1 INT 0 42 -e press1 --apply    # double-confirm prompt
 ot-aiops mqtt publish factory/line1/cmd '{"setpoint":50}' -e uns --apply
+ot-aiops eip write-tag Setpoint 42 -e cell5 --apply  # Logix tag write (double-confirm)
 ```
 
 ### MCP tool calls (JSON args → sample structured return)
@@ -224,6 +267,56 @@ ot-aiops mqtt publish factory/line1/cmd '{"setpoint":50}' -e uns --apply
 ```json
 { "availability": "AVAILABLE", "execution": "ACTIVE", "controller_mode": "AUTOMATIC",
   "program": "O1234", "available": true, "running": true, "verdict": "running" }
+```
+
+`eip_read_tag`:
+```json
+{ "tag": "Conveyor.Speed", "endpoint": "cell5" }
+```
+```json
+{ "endpoint": "cell5", "tag": "Conveyor.Speed", "value": 1500.0, "type": "REAL",
+  "error": "", "good": true }
+```
+
+`eip_write_tag` (dry-run):
+```json
+{ "tag": "Setpoint", "value": 42, "endpoint": "cell5" }
+```
+```json
+{ "endpoint": "cell5", "tag": "Setpoint", "dry_run": true, "before": 7,
+  "would_write": 42, "note": "Dry run — nothing written. Re-run with dry_run=false AND a recorded approver…" }
+```
+
+`sparkplug_decode_payload` (full SpB metric decode):
+```json
+{ "payload": "CAESBwoDYWJjEAE=", "encoding": "base64" }
+```
+```json
+{ "encoding": "sparkplug_b", "seq": 0, "metric_count": 2, "historical_count": 0,
+  "metrics": [ {"name": "Temperature", "alias": 1, "datatype": "Double", "value": 21.5,
+                "is_historical": false, "is_null": false} ] }
+```
+
+`oee_compute`:
+```json
+{ "planned_time_s": 28800, "run_time_s": 25200, "ideal_cycle_time_s": 2.0,
+  "total_count": 12000, "good_count": 11800 }
+```
+```json
+{ "availability": {"raw": 0.875, "value": 0.875, "capped": false},
+  "performance": {"value": 0.952381}, "quality": {"value": 0.983333},
+  "oee": 0.819444, "oee_pct": 81.94 }
+```
+
+`asset_inventory` (active fingerprint):
+```json
+{ "endpoints": ["press1", "cell5"] }
+```
+```json
+{ "asset_count": 2, "reachable_count": 2, "method": "active_fingerprint",
+  "assets": [ {"endpoint": "press1", "protocol": "s7", "vendor": "Siemens/compatible",
+               "model": "CPU 1511-1 PN", "firmware": "2.8", "reachable": true,
+               "last_seen": "2026-06-28T10:00:00+00:00"} ] }
 ```
 
 ### Diagnostics (multi-dimensional JSON for an agent to visualize)
@@ -266,17 +359,18 @@ ot-aiops mcp        # stdio transport; or the `ot-aiops-mcp` entry point
 
 ## Safety & governance
 
-- **Read-first.** 33 of 36 protocol tools are read-only. The 3 write/command tools (`s7_write_db`, `mc_write_words`, `mqtt_publish`) are **OT-dangerous**: governed at **high risk_tier**, **off by default (dry-run)**, capture the **BEFORE value for undo**, require a **double-confirm in the CLI**, and (via policy) a recorded approver — **MOC discipline**. 未经授权勿对生产控制系统写入.
+- **Read-first.** 47 of 51 tools are read-only. The 4 write/command tools (`s7_write_db`, `mc_write_words`, `mqtt_publish`, `eip_write_tag`) are **OT-dangerous**: governed at **high risk_tier**, **off by default (dry-run)**, capture the **BEFORE value for undo**, require a **double-confirm in the CLI**, and (via policy) a recorded approver — **MOC discipline**. 未经授权勿对生产控制系统写入.
 - **Do not point this at a production control system without authorization.** OT networks are safety-critical; even reads add load. Test against a simulator first.
 - All endpoint-returned text is sanitized (prompt-injection defense); secrets are never returned by any tool; MTConnect XML is parsed with DTD/entity declarations refused.
 - Every tool runs through the vendored governance harness: SQLite **audit** (`~/.ot-aiops/audit.db`), token/call **budget** + runaway breaker, **risk-tier** gate, **undo** recording.
 
 ## Roadmap
 
-- EtherNet/IP read-first Logix tags via an optional `pycomm3` extra.
+- EtherNet/IP **PLC-5 / SLC-500 (PCCC)** and **Micro800** support (Logix tags are done in 0.2.0).
+- **Passive** asset discovery (SPAN/tap, no connections) alongside today's active fingerprint.
 - EtherCAT read-only PDO/SDO via an optional `pysoem` extra.
 - OPC-UA certificate security + real Alarms & Conditions subscriptions.
-- Sparkplug B protobuf decode bundled; MTConnect streaming long-poll.
+- MTConnect streaming long-poll; Sparkplug B DataSet/Template deep expansion.
 
 **Missing a protocol, device, or feature? 缺功能提 issue/PR 欢迎留言** — open a [GitHub issue or PR](https://github.com/AIops-tools/OT-AIops/issues).
 

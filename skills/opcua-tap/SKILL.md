@@ -21,8 +21,10 @@ Preview — validated against an in-process asyncua simulator, NOT live SCADA.
 
 ## When NOT to use (routing)
 - Modbus → `modbus-tap`; Siemens S7 → `s7-tap`; Mitsubishi → `mc-tap`; CNC
-  machine tools → `mtconnect-tap`; MQTT/Sparkplug/UNS → `sparkplug-tap`.
-- Cross-protocol "why no data" / alarm-flood / tag-health → `industrial-diagnostics`.
+  machine tools → `mtconnect-tap`; MQTT/Sparkplug/UNS → `sparkplug-tap`;
+  Rockwell/Allen-Bradley EtherNet/IP → `ethernetip-tap`.
+- Cross-protocol "why no data" / alarm-flood / tag-health → `industrial-diagnostics`;
+  OEE / downtime / asset inventory → `industrial-analytics`.
 - IT/network devices, Kubernetes, hypervisors, backups → not this tool.
 
 ## Tools
@@ -35,8 +37,14 @@ Preview — validated against an in-process asyncua simulator, NOT live SCADA.
 | `opcua_read_many` | `node_ids[], endpoint?` | `[{node_id, value, ...}]` |
 | `opcua_subscribe_sample` | `node_id, endpoint?, samples=5, interval_ms=500, timeout_s=30` | `{collected, samples[...]}` (bounded) |
 | `opcua_read_alarms` | `endpoint?, node_id="i=85", depth=4` | `{active_alarms[...], active_count}` |
+| `opcua_read_history` | `node_id, endpoint?, start?, end?, max_points=1000` | `{supported, count, values:[{value, source_timestamp, status_code}]}` |
 | `health_summary` | `endpoint?, node_ids[]?, thresholds?` | `{overall, counts, offenders[...]}` |
 | `anomaly_scan` | `node_id, endpoint?, samples=20, interval_ms=200, sigma=3.0` | `{mean, stddev, outliers[...]}` |
+
+`opcua_read_history` is OPC-UA **Historical Access (HDA)**: raw historical values
+over a `[start,end]` ISO-8601 window (bounded). It returns `{supported:false, note}`
+gracefully when the server does not historize the node. For bounded change-of-value
+(only the changes, not every sample) use `monitor_changes` from `industrial-analytics`.
 
 ## Example
 `opcua_read_node(node_id="ns=2;i=5", endpoint="line1")`

@@ -15,6 +15,33 @@ from ot_aiops.ops import sparkplug_ops as ops
 @mcp.tool()
 @governed_tool(risk_level="low")
 @tool_errors("dict")
+def sparkplug_decode_payload(
+    payload: str, encoding: str = "base64", alias_map: Optional[dict] = None
+) -> dict:
+    """[READ][risk=low] Decode a single raw Sparkplug B payload to structured metrics.
+
+    Full protobuf decode (vendored Eclipse Tahu schema): per metric returns name,
+    alias, datatype (Int/Float/Bool/String/DateTime/DataSet/Template…), value,
+    timestamp, and is_historical / is_null flags.
+
+    Args:
+        payload: Raw Sparkplug B protobuf bytes as a string, ``base64`` (default) or ``hex``.
+        encoding: 'base64' or 'hex'.
+        alias_map: Optional {alias: name} (from a prior BIRTH) so alias-only
+            NDATA/DDATA metrics resolve to names.
+
+    Returns dict: {encoding:'sparkplug_b', timestamp, seq, uuid, metric_count,
+        historical_count, metrics:[{name, alias, datatype, value, timestamp,
+        is_historical, is_null}]}.
+
+    Example: sparkplug_decode_payload(payload="CAESBwoDYWJjEAE=", encoding="base64").
+    """
+    return ops.sparkplug_decode_payload(payload, encoding, alias_map)
+
+
+@mcp.tool()
+@governed_tool(risk_level="low")
+@tool_errors("dict")
 def mqtt_read_topic(
     endpoint: Optional[str] = None,
     topic: str = "",
@@ -50,7 +77,11 @@ def sparkplug_subscribe_sample(
     count: int = 25,
     timeout_s: int = 10,
 ) -> dict:
-    """[READ][risk=low] Bounded Sparkplug B sample: topic parsed + payload decoded.
+    """[READ][risk=low] Bounded Sparkplug B sample with full decode + birth/death/seq.
+
+    Topics are parsed and payloads fully protobuf-decoded; a birth/death + seq
+    model resolves aliases (from NBIRTH/DBIRTH), applies NDATA/DDATA by alias, and
+    flags is_historical metrics and seq gaps.
 
     Args:
         endpoint: Endpoint name from config.
@@ -58,8 +89,10 @@ def sparkplug_subscribe_sample(
         count: Max messages (1..500).
         timeout_s: Max seconds to wait (1..60).
 
-    Returns dict: {endpoint, topic, message_count, samples:[{topic, sparkplug:
-        {namespace, group_id, message_type, edge_node_id, device_id}, payload}]}.
+    Returns dict: {endpoint, topic, message_count, historical_metric_count,
+        seq_gap_count, samples:[{topic, sparkplug:{group_id, message_type,
+        edge_node_id, device_id}, payload:{metrics:[{name, alias, datatype, value,
+        is_historical}]}}]}.
 
     Example: sparkplug_subscribe_sample(topic="spBv1.0/Plant1/#", count=20).
     """
@@ -72,15 +105,20 @@ def sparkplug_subscribe_sample(
 def sparkplug_node_list(
     endpoint: Optional[str] = None, timeout_s: int = 10, count: int = 500
 ) -> dict:
-    """[READ][risk=low] Discover edge nodes / devices from NBIRTH / DBIRTH topics.
+    """[READ][risk=low] Discover edge nodes/devices + online state + primary-host STATE.
+
+    Builds the birth/death + seq model from BIRTH/DATA/DEATH/STATE topics: each
+    node reports online/born, its devices, learned metric aliases, and seq gaps;
+    STATE topics surface primary-host status.
 
     Args:
         endpoint: Endpoint name from config.
         timeout_s: Observation window in seconds (1..60). Longer catches infrequent nodes.
         count: Max messages to inspect (1..500).
 
-    Returns dict: {endpoint, node_count, nodes:[{group_id, edge_node_id, born,
-        devices:[...]}]}.
+    Returns dict: {endpoint, node_count, nodes:[{group_id, edge_node_id, online,
+        born, devices:[...], metric_aliases_known, seq_gap_count, seq_issues}],
+        primary_hosts:[{host_id, state}]}.
 
     Example: sparkplug_node_list(timeout_s=15).
     """

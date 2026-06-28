@@ -407,6 +407,77 @@ def _translate_mqtt(exc: Exception, target: TargetConfig) -> OTConnectionError:
     )
 
 
+# ─── EtherNet/IP (Rockwell / Allen-Bradley Logix, CIP via pycomm3) ────────────
+
+
+def _build_eip_client(target: TargetConfig) -> Any:
+    """Construct (but do not connect) a pycomm3 LogixDriver for ``target``.
+
+    Module-level so tests can monkeypatch it with a fake driver. pycomm3 is pure
+    Python (no native deps). The CIP path is ``host`` or ``host/slot`` (the slot
+    is the controller's chassis slot — 0 for most CompactLogix, the CPU slot for
+    a ControlLogix chassis).
+    """
+    try:
+        from pycomm3 import LogixDriver
+    except ImportError as exc:  # pragma: no cover — exercised only without pycomm3
+        raise OTConnectionError(
+            "The 'pycomm3' package is not installed (declared dependency)."
+        ) from exc
+
+    if not target.host:
+        raise OTConnectionError(
+            f"EtherNet/IP endpoint '{target.name}' has no host. Add 'host: <ip>' to "
+            f"its config entry (and 'slot:' for a ControlLogix chassis CPU slot).",
+            endpoint=target.name,
+            protocol="ethernetip",
+        )
+    path = f"{target.host}/{target.slot}" if target.slot else target.host
+    return LogixDriver(path)
+
+
+@contextmanager
+def eip_session(target: TargetConfig) -> Iterator[Any]:
+    """Connect to a Logix controller over CIP, yield the driver, always close it."""
+    if target.protocol not in ("ethernetip", "eip"):
+        raise OTConnectionError(
+            f"Endpoint '{target.name}' is protocol '{target.protocol}', not ethernetip.",
+            endpoint=target.name,
+            protocol=target.protocol,
+        )
+    client = _build_eip_client(target)
+    try:
+        client.open()
+    except Exception as exc:  # noqa: BLE001 — translate any connect failure
+        raise _translate_eip(exc, target) from exc
+    try:
+        yield client
+    except OTConnectionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — translate any in-session failure
+        raise _translate_eip(exc, target) from exc
+    finally:
+        try:
+            client.close()
+        except Exception:  # noqa: BLE001 — close must not mask the real error
+            pass
+
+
+def _translate_eip(exc: Exception, target: TargetConfig) -> OTConnectionError:
+    """Map a pycomm3 exception to a teaching ``OTConnectionError``."""
+    detail = str(exc).strip()[:200]
+    endpoint = f"{target.host} slot={target.slot}"
+    return OTConnectionError(
+        f"EtherNet/IP operation on '{target.name}' ({endpoint}) failed: {detail}. "
+        f"Check the host, the controller slot (0 for CompactLogix, the CPU slot for "
+        f"ControlLogix), that EtherNet/IP (TCP 44818) is reachable, and that this is "
+        f"a Logix controller (PLC-5/SLC PCCC is not supported). Point at a CIP/Logix "
+        f"simulator to test.",
+        endpoint=endpoint,
+        protocol="ethernetip",
+    )
+
+
 # ─── manager ─────────────────────────────────────────────────────────────────
 
 
@@ -441,6 +512,8 @@ class ConnectionManager:
             "s7": s7_session,
             "mc": mc_session,
             "mqtt": mqtt_session,
+            "ethernetip": eip_session,
+            "eip": eip_session,
         }
         builder = builders.get(target.protocol, opcua_session)
         return builder(target)

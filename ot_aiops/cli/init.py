@@ -16,6 +16,7 @@ from ot_aiops.cli._common import cli_errors, console
 from ot_aiops.config import (
     CONFIG_DIR,
     CONFIG_FILE,
+    DEFAULT_EIP_PORT,
     DEFAULT_MC_PORT,
     DEFAULT_MODBUS_PORT,
     DEFAULT_MQTT_PORT,
@@ -72,6 +73,14 @@ def _prompt_protocol(protocol: str, name: str, store):
         entry["host"] = typer.prompt("Mitsubishi PLC host (IP/FQDN)").strip()
         entry["port"] = typer.prompt("Port", default=DEFAULT_MC_PORT, type=int)
         entry["plctype"] = typer.prompt("PLC type (Q|L|QnA|iQ-R|iQ-L)", default="Q").strip()
+    elif protocol in ("ethernetip", "eip"):
+        entry["protocol"] = "ethernetip"
+        entry["host"] = typer.prompt("EtherNet/IP (Logix) host (IP/FQDN)").strip()
+        entry["slot"] = typer.prompt(
+            "Controller slot (0 for CompactLogix; CPU slot for ControlLogix)",
+            default=0, type=int,
+        )
+        entry["port"] = typer.prompt("Port", default=DEFAULT_EIP_PORT, type=int)
     elif protocol == "mtconnect":
         entry["agent_url"] = typer.prompt(
             "MTConnect agent base URL", default="http://localhost:5000"

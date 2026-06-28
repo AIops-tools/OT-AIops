@@ -18,7 +18,7 @@ PROTOCOLS: tuple[dict, ...] = (
         "read_tools": [
             "opcua_server_info", "opcua_browse", "opcua_read_node",
             "opcua_read_many", "opcua_subscribe_sample", "opcua_read_alarms",
-            "health_summary", "anomaly_scan",
+            "opcua_read_history", "health_summary", "anomaly_scan",
         ],
         "write_tools": [],
         "params": ["endpoint_url", "username", "security_mode", "security_policy"],
@@ -77,20 +77,22 @@ PROTOCOLS: tuple[dict, ...] = (
         "auth": "username/password + TLS (optional)",
         "read_tools": [
             "mqtt_read_topic", "sparkplug_subscribe_sample",
-            "sparkplug_node_list", "uns_browse",
+            "sparkplug_decode_payload", "sparkplug_node_list", "uns_browse",
         ],
         "write_tools": ["mqtt_publish (HIGH/MOC)"],
         "params": ["host/broker", "port(1883/8883)", "topic", "use_tls", "username"],
     },
     {
         "protocol": "ethernetip",
-        "status": "roadmap-stub",
-        "library": "pycomm3 (planned)",
-        "transport": "CIP / EtherNet-IP",
-        "auth": "n/a",
-        "read_tools": ["ethernetip_status"],
-        "write_tools": [],
-        "params": [],
+        "status": "implemented",
+        "library": "pycomm3 (pure-python, CIP)",
+        "transport": "EtherNet/IP (CIP over TCP 44818)",
+        "auth": "none (transport); Logix tag model",
+        "read_tools": [
+            "eip_controller_info", "eip_list_tags", "eip_read_tag", "eip_read_many",
+        ],
+        "write_tools": ["eip_write_tag (HIGH/MOC)"],
+        "params": ["host", "slot", "port(44818)"],
     },
     {
         "protocol": "ethercat",
@@ -106,6 +108,12 @@ PROTOCOLS: tuple[dict, ...] = (
 
 DIAGNOSTICS_TOOLS = ("diagnose_dataflow", "historian_health", "alarm_bad_actors", "tag_health")
 
+# Cross-protocol analytics (read-only): OEE/downtime, active asset inventory, CoV.
+ANALYTICS_TOOLS = (
+    "oee_compute", "downtime_events", "oee_multidim", "asset_inventory",
+    "monitor_changes",
+)
+
 
 def protocols_supported() -> dict:
     """[READ] Capability map: protocols, status, tools, and connection params."""
@@ -120,12 +128,14 @@ def protocols_supported() -> dict:
         "roadmap_stubs": [p["protocol"] for p in stubs],
         "protocols": list(PROTOCOLS),
         "diagnostics": list(DIAGNOSTICS_TOOLS),
+        "analytics": list(ANALYTICS_TOOLS),
         "tool_counts": {
             "protocol_read": read_count,
             "protocol_write_moc": write_count,
             "diagnostics": len(DIAGNOSTICS_TOOLS),
+            "analytics": len(ANALYTICS_TOOLS),
         },
-        "safety": "Reads non-destructive. Writes (S7/MC/MQTT) are HIGH risk_tier, "
-        "MOC-gated (dry-run + double-confirm + undo capture). 未经授权勿对生产控制系统写入. "
-        "Preview — not validated against live PLCs/SCADA.",
+        "safety": "Reads non-destructive. Writes (S7/MC/MQTT/EtherNet-IP) are HIGH "
+        "risk_tier, MOC-gated (dry-run + double-confirm + undo capture). "
+        "未经授权勿对生产控制系统写入. Preview — not validated against live PLCs/SCADA.",
     }

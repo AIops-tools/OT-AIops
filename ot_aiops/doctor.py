@@ -98,6 +98,8 @@ def _where(target) -> str:
     if target.protocol == "mqtt":
         topic = target.topic or "#"
         return f"{target.host}:{target.port} topic={topic} tls={target.use_tls}"
+    if target.protocol in ("ethernetip", "eip"):
+        return f"{target.host} slot={target.slot}"
     return f"{target.host}:{target.port}"
 
 
@@ -134,6 +136,12 @@ def _probe(target) -> tuple[bool, str]:
 
             out = mqtt_read_topic(target, count=1, timeout_s=3)
             return True, f"MQTT connected, messages={out.get('message_count')}"
+        if target.protocol in ("ethernetip", "eip"):
+            from ot_aiops.ops.eip_ops import eip_controller_info
+
+            info = eip_controller_info(target)
+            ctrl = info.get("controller", {})
+            return True, f"EtherNet/IP controller={ctrl.get('product_name', '?')}"
     except Exception as exc:  # noqa: BLE001 — connectivity is a status, not a crash
         return False, str(exc)[:200]
     return False, f"No probe implemented for protocol '{target.protocol}'."
